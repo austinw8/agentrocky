@@ -5,6 +5,7 @@
 
 import SwiftUI
 import AppKit
+import Combine
 
 @main
 struct agentrockyApp: App {
@@ -19,19 +20,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var rockyWindow: NSPanel?
     var rockyState = RockyState()
 
-    // Walk state
     private var walkTimer: Timer?
     private var frameTimer: Timer?
-    private let rockyWidth: CGFloat = 80
-    private let rockyHeight: CGFloat = 80
-    private let walkSpeed: CGFloat = 100  // points per second
+    private let rockyWidth: CGFloat = 180
+    private let rockyHeight: CGFloat = 140
+    private let walkSpeed: CGFloat = 100
     private var lastTick: Date = Date()
+
+    private var jazzWorkItem: DispatchWorkItem?
+    private var bubbleWorkItem: DispatchWorkItem?
+    private var cancellables = Set<AnyCancellable>()
+
+    private let workingMessages = ["rocky building", "rocky do big science", "rocky save erid"]
+    private let jazzMessages = ["fist my bump", "amaze amaze amaze", "rocky hate mark"]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupRockyWindow()
         startWalking()
+        setupJazzTriggers()
+        setupSpeechBubble()
     }
+
+    // MARK: - Window
 
     func setupRockyWindow() {
         let panel = NSPanel(
@@ -47,7 +58,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
 
-        // Sit Rocky on top of the dock
         if let screen = NSScreen.main {
             let dockTop = screen.visibleFrame.minY
             let startX = screen.frame.midX - rockyWidth / 2
@@ -66,46 +76,118 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         rockyWindow = panel
     }
 
+    // MARK: - Walk
+
     func startWalking() {
         lastTick = Date()
 
-        // Position update at ~60fps
         walkTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             self?.updatePosition()
         }
-
-        // Sprite frame swap at ~6fps
-        frameTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 6.0, repeats: true) { [weak self] _ in
-            self?.updateWalkFrame()
+        frameTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 8.0, repeats: true) { [weak self] _ in
+            self?.updateFrame()
         }
     }
 
     private func updatePosition() {
         let now = Date()
         defer { lastTick = now }
-        guard !rockyState.isChatOpen else { return }
+        guard !rockyState.isChatOpen, !rockyState.isJazzing else { return }
 
         let dt = now.timeIntervalSince(lastTick)
-
         let screen = rockyState.screenBounds
         let maxX = screen.maxX - rockyWidth
-        let minX = screen.minX
 
         rockyState.positionX += CGFloat(dt) * walkSpeed * rockyState.direction
 
         if rockyState.positionX >= maxX {
             rockyState.positionX = maxX
             rockyState.direction = -1
-        } else if rockyState.positionX <= minX {
-            rockyState.positionX = minX
+        } else if rockyState.positionX <= screen.minX {
+            rockyState.positionX = screen.minX
             rockyState.direction = 1
         }
 
         rockyWindow?.setFrameOrigin(NSPoint(x: rockyState.positionX, y: rockyState.dockY))
     }
 
-    private func updateWalkFrame() {
-        guard !rockyState.isChatOpen else { return }
-        rockyState.walkFrameIndex = (rockyState.walkFrameIndex + 1) % 2
+    private func updateFrame() {
+        if rockyState.isJazzing {
+            rockyState.jazzFrameIndex = (rockyState.jazzFrameIndex + 1) % 3
+        } else if !rockyState.isChatOpen {
+            rockyState.walkFrameIndex = (rockyState.walkFrameIndex + 1) % 2
+        }
+    }
+
+    // MARK: - Jazz
+
+    private func setupJazzTriggers() {
+        // Jazz when a Claude task finishes
+        rockyState.session.$isRunning
+            .removeDuplicates()
+            .dropFirst()                    // skip the initial false
+            .filter { !$0 }                 // only when it becomes false (task done)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.startJazz(duration: 3.0) }
+            .store(in: &cancellables)
+
+        // Random jazz while idle
+        scheduleRandomJazz()
+    }
+
+    private func setupSpeechBubble() {
+        rockyState.session.$isRunning
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] running in
+                guard let self else { return }
+                self.bubbleWorkItem?.cancel()
+                if running {
+                    withAnimation {
+                        self.rockyState.speechBubble = self.workingMessages.randomElement()!
+                    }
+                } else {
+                    withAnimation {
+                        self.rockyState.speechBubble = "rocky done!"
+                    }
+                    let work = DispatchWorkItem { [weak self] in
+                        withAnimation { self?.rockyState.speechBubble = nil }
+                    }
+                    self.bubbleWorkItem = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: work)
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    func startJazz(duration: TimeInterval) {
+        guard !rockyState.isJazzing else { return }
+        rockyState.isJazzing = true
+
+        jazzWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.rockyState.isJazzing = false
+        }
+        jazzWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
+    }
+
+    private func scheduleRandomJazz() {
+        let delay = Double.random(in: 15...45)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            if !self.rockyState.isChatOpen {
+                self.startJazz(duration: 2.0)
+                withAnimation { self.rockyState.speechBubble = self.jazzMessages.randomElement()! }
+                self.bubbleWorkItem?.cancel()
+                let work = DispatchWorkItem { [weak self] in
+                    withAnimation { self?.rockyState.speechBubble = nil }
+                }
+                self.bubbleWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+            }
+            self.scheduleRandomJazz()
+        }
     }
 }

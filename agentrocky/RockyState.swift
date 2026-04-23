@@ -10,9 +10,12 @@ import Darwin
 /// Shared observable state between AppDelegate (walk logic) and RockyView (display).
 class RockyState: ObservableObject {
     @Published var walkFrameIndex: Int = 0
+    @Published var jazzFrameIndex: Int = 0
+    @Published var isJazzing: Bool = false
     @Published var direction: CGFloat = 1
     @Published var isChatOpen: Bool = false
     @Published var positionX: CGFloat = 0
+    @Published var speechBubble: String? = nil
     var screenBounds: CGRect = .zero
     var dockY: CGFloat = 0
 
