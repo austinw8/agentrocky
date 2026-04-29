@@ -32,7 +32,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     private let workingMessages = ["rocky building", "rocky do big science", "rocky save erid"]
-    private let jazzMessages = ["fist my bump", "amaze amaze amaze", "rocky hate mark"]
+    private let jazzMessages = ["fist my bump", "amaze amaze amaze", "rocky hate mark", "thumbs up, baby", "grace rocky save stars"]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
